@@ -16,7 +16,13 @@
 #define N 1600
 
 int main(int argc, char **argv) {
-	int i,j,k, my_rank, num_procs, p, row, col, currRank, partialSum, finalSum;
+	int i,j,k, my_rank, num_procs, p, row, col, currRank;
+	double partialSum, finalSum;
+	double *A;
+	double *B;
+	double *C;
+	double *bufferA;
+	double *bufferB;
 	
 	MPI_Group orig_group, row_group, col_group;
 	MPI_Comm row_comm, col_comm;
@@ -26,11 +32,11 @@ int main(int argc, char **argv) {
 	
 	p = sqrt(num_procs);
 	
-	double A[N/p][N/p];
-	double B[N/p][N/p];
-	double C[N/p][N/p];
-	double bufferA[N/p][N/p];
-	double bufferB[N/p][N/p];
+	A = (double *)malloc((N/p)*(N/p)*sizeof(double));
+	B = (double *)malloc((N/p)*(N/p)*sizeof(double));
+	C = (double *)malloc((N/p)*(N/p)*sizeof(double));
+	bufferA = (double *)malloc((N/p)*(N/p)*sizeof(double));
+	bufferB = (double *)malloc((N/p)*(N/p)*sizeof(double));
 	
 	row = my_rank / p;
 	col = my_rank % (int)p;
@@ -38,33 +44,21 @@ int main(int argc, char **argv) {
 	// Fill in the arrays A & B
 	for (i=0; i < N/p; i++) {
 		for (j=0; j < N/p; j++) {
-			A[i][j] = (row * N/p) + i;
-			B[i][j] = ((row * N/p) + i) + ((col * N/p) + j);
+			A[i * N/p + j] = (row * N/p) + i;
+			B[i * N/p + j] = ((row * N/p) + i) + ((col * N/p) + j);
 		}
 	}
-	
-	printf("Block of A on rank %d at coordinates (%d,%d)\n", my_rank, row, col);
-	for (i=0; i < N/p; i++) {
-		for (j=0; j < N/p; j++) {
-			printf("%f   ", A[i][j]);
-		}
-		printf("\n");
+		
+	// Start the timer
+	double start_time;
+	MPI_Barrier(MPI_COMM_WORLD);
+	if (my_rank == 0) {  
+		start_time = MPI_Wtime();
 	}
 	
-	printf("Block of B on rank %d at coordinates (%d,%d)\n", my_rank, row, col);
-	for (i=0; i < N/p; i++) {
-		for (j=0; j < N/p; j++) {
-			printf("%f   ", B[i][j]);
-		}
-		printf("\n");
-	}
-	
-	//Split necessary processes into new groups, for row and column
-	//MPI_Comm_group(MPI_COMM_WORLD, &orig_group);
-	
-	//Broadcast to A to row and B to column
 	MPI_Status status;
 	for (currRank = 0; currRank < p; currRank++) {
+		//Broadcast to A to row and B to column
 		if (currRank == row){
 			for (i=col; i <= col + (p*(p-1)); i++) { 
 				if ((i != my_rank) && ((i % p) == col)) {
@@ -79,47 +73,36 @@ int main(int argc, char **argv) {
 				}
 			}
 		}
+		
+		//Matrix multiplication
 		if ((currRank == row) && (currRank == col)) {
 			for (k=0; k < N/p; k++) {
 				for (i=0; i < N/p; i++) {
 					for (j=0; j < N/p; j++) {
-						C[i][j] += A[i][k] * B[k][j];
-						printf("1 i:%d; j:%d; k:%d; currRank:%d; my_rank:%d; %f * %f\n", i,j,k, currRank, my_rank, A[i][k], B[k][j]);
+						C[i * N/p + j] += A[i * N/p + k] * B[k * N/p + j];
 					}
 				}
 			}
-			//printf("[X][X] Process: %d; currRank: %d\n", my_rank, currRank);
 		}
 		else if (currRank == row) {
 			MPI_Recv(bufferA, (N/p)*(N/p), MPI_DOUBLE, currRank + p*row, p, MPI_COMM_WORLD, &status);
 			for (k=0; k < N/p; k++) {
 				for (i=0; i < N/p; i++) {
 					for (j=0; j < N/p; j++) {
-						C[i][j] += bufferA[i][k] * B[k][j];
-						printf("2 i:%d; j:%d; k:%d; currRank:%d; my_rank:%d; %f * %f\n", i,j,k, currRank, my_rank, bufferA[i][k], B[k][j]);
+						C[i * N/p + j] += bufferA[i * N/p + k] * B[k * N/p + j];
 					}
 				}
 			}
-			printf("Block of bufferA on rank %d at process %d\n", my_rank, currRank);
-			for (i=0; i < N/p; i++) {
-				for (j=0; j < N/p; j++) {
-					printf("%f   ", bufferA[i][j]);
-				}
-				printf("\n");
-			}
-			//printf("BUFFERA Process: %d; currRank: %d\n", my_rank, currRank);
 		}
 		else if (currRank == col) {
 			MPI_Recv(bufferB, (N/p)*(N/p), MPI_DOUBLE, (p * currRank) + col, p, MPI_COMM_WORLD, &status);
 			for (k=0; k < N/p; k++) {
 				for (i=0; i < N/p; i++) {
 					for (j=0; j < N/p; j++) {
-						C[i][j] += A[i][k] * bufferB[k][j];
-						printf("3 i:%d; j:%d; k:%d; currRank:%d; my_rank:%d; %f * %f\n", i,j,k, currRank, my_rank, A[i][k], bufferB[k][j]);
+						C[i * N/p + j] += A[i * N/p + k] * bufferB[k * N/p + j];
 					}
 				}
 			}
-			//printf("BUFFERB Process: %d; currRank: %d\n", my_rank, currRank);
 		}
 		else {
 			MPI_Recv(bufferA, (N/p)*(N/p), MPI_DOUBLE, currRank + p*row, p, MPI_COMM_WORLD, &status);
@@ -127,28 +110,27 @@ int main(int argc, char **argv) {
 			for (k=0; k < N/p; k++) {
 				for (i=0; i < N/p; i++) {
 					for (j=0; j < N/p; j++) {
-						C[i][j] += bufferA[i][k] * bufferB[k][j];
-						printf("4 i:%d; j:%d; k:%d; currRank:%d; my_rank:%d; %f * %f\n", i,j,k, currRank, my_rank, bufferA[i][k], B[k][j]);
+						C[i * N/p + j] += bufferA[i * N/p + k] * bufferB[k * N/p + j];
 					}
 				}
 			}
-			//printf("BUFFERA, BUFFERB Process: %d; currRank: %d\n", my_rank, currRank);
 		}
 	}
-	printf("Block of C on rank %d at process %d\n", my_rank, currRank);
+	
+	//Summation
 	for (i=0; i < N/p; i++) {
 		for (j=0; j < N/p; j++) {
-			printf("%f   ", C[i][j]);
-			partialSum += C[i][j];
+			partialSum += C[i * N/p + j];
 		}
-		printf("\n");
 	}
-	printf("partialSum = %d, rank is %d\n", partialSum, my_rank);
+	
 	MPI_Reduce(&partialSum, &finalSum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
+	//Verification
 	if (my_rank == 0) {
-		printf("The final sum is: %d\n", finalSum);
-		printf("The formula calculated sum is: %d\n", ((N*N*N)*(N-1)*(N-1))/2);
+		printf("The final sum is: %lf\n", finalSum);
+		printf("The formula calculated sum is: %lf\n", (((double)N*N*N)*(N-1)*(N-1))/2);
+		fprintf(stdout,"TOTAL RUNTIME: %f\n", MPI_Wtime() - start_time);
 	}
 	
 	MPI_Finalize();
